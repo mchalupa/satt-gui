@@ -38,6 +38,15 @@ Statica tools tester GUI
 Select a tool which to run, configure and run!
 """
 
+class ToolPage(object):
+    def __init__(self, tool, tv = None, tb = None):
+        # store config here when displaying
+        # something else (e. g. log)
+        self.config = ''
+        self.tool = tool
+        self.textview = tv
+        self.textbuffer = tb
+
 class SattProxy(object):
     def __init__(self):
         global user
@@ -119,7 +128,7 @@ class SattGui(Gtk.Window):
         buff.set_text(help_page_text)
         pg.add(text)
         self.notebook.append_page(pg, Gtk.Label('Help'))
-        self.tools_pages[pg] = (text, 'help')
+        self.tools_pages[pg] = ToolPage('help', text, buff)
 
     def _addNotebookPages(self, tools):
         self._addHelpPage()
@@ -136,7 +145,7 @@ class SattGui(Gtk.Window):
             self.notebook.append_page(pg, Gtk.Label(tool))
 
             # hmm, we could iterate over child, but whatever
-            self.tools_pages[pg] = (text, tool)
+            self.tools_pages[pg] = ToolPage(tool, text, buff)
 
     def _addNotebook(self):
         tools = self.satt.getTools()
@@ -152,18 +161,17 @@ class SattGui(Gtk.Window):
         self.notebook.connect('switch-page', self.page_selected_cb)
 
     def page_selected_cb(self, notebook, page, data):
-        text, tool = self.tools_pages[page]
-        if tool == 'help':
+        tp = self.tools_pages[page]
+        if tp.tool == 'help':
             return
 
-        buff = text.get_buffer()
-        if buff.get_char_count() == 0:
-            ok, cfg, err = self.satt.getConfigFile(tool)
+        if tp.textbuffer.get_char_count() == 0:
+            ok, cfg, err = self.satt.getConfigFile(tp.tool)
             if ok != 0:
-                buff.set_text('Failed getting config file: {0}'.format(err))
+                tp.textbuffer.set_text('Failed getting config file: {0}'.format(err))
                 return
             else:
-                buff.set_text(cfg)
+                tp.textbuffer.set_text(cfg)
 
     def _addBottomButtons(self):
         self._addToggleOptions()
