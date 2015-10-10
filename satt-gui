@@ -40,13 +40,14 @@ Select a tool which to run, configure and run!
 
 class ToolPage(object):
     def __init__(self, tool, tv = None, tb = None):
-        # store config here when displaying
-        # something else (e. g. log)
-        self.config = ''
         self.tool = tool
-        self.textview = tv
-        self.textbuffer = tb
-        self.showing_log = False
+        # one of these widgets is always active
+        self.run = None
+        self.logs = None
+        self.results = None
+
+        self.box = None # box containing these items
+        self.active = None
 
 class SattProxy(object):
     def __init__(self):
@@ -81,6 +82,7 @@ class SattProxy(object):
         return self._run(cmd)
 
     def getTools(self):
+        return ['tool1', 'tool2', 'tool3']
         global remote_dir
         cmd = self.ssh[:]
         cmd.append('find')
@@ -131,157 +133,48 @@ class SattProxy(object):
 
         return self._run(cmd)
 
-class SattGui(Gtk.Window):
+def _createTextWin():
+    langm = GtkSource.LanguageManager()
+    lang = langm.get_language('python')
+
+    win = Gtk.ScrolledWindow()
+    buff = GtkSource.Buffer()
+    buff.set_language(lang)
+    text = GtkSource.View.new_with_buffer(buff)
+
+    win.add(text)
+    return (win, text, buff)
+
+class RunPage(object):
     def __init__(self):
-        Gtk.Window.__init__(self, title='Statica Tool Tester')
-        self.satt = SattProxy()
-        self.tools_pages = {}
-        self.cur_page = None
-
-        self.set_default_size(600, 400)
-        self.vbox = Gtk.VBox()
+        win, self.textview, self.textbuf = _createTextWin()
+        self.box = Gtk.VBox()
         self.buttons_box = Gtk.HBox()
-        self.add(self.vbox)
 
-        self.vbox.pack_end(self.buttons_box, False, False, 0)
-
+        self.textbuf.set_text('text window')
         self._addBottomButtons()
-        self._addNotebook()
 
-    def _addHelpPage(self):
-        # TODO when user selects a tool,
-        # destroy this page
-        pg = Gtk.Box()
-        text = Gtk.TextView()
-        text.set_editable(False)
-        buff = text.get_buffer()
-
-        global help_page_text
-        buff.set_text(help_page_text)
-        pg.add(text)
-        self.notebook.append_page(pg, Gtk.Label('Help'))
-        self.tools_pages[pg] = ToolPage('help', text, buff)
-
-    def _addNotebookPages(self, tools):
-        self._addHelpPage()
-        langm = GtkSource.LanguageManager()
-        lang = langm.get_language('python')
-
-        for tool in tools:
-            pg = Gtk.ScrolledWindow()
-            buff = GtkSource.Buffer()
-            buff.set_language(lang)
-            text = GtkSource.View.new_with_buffer(buff)
-
-            pg.add(text)
-            self.notebook.append_page(pg, Gtk.Label(tool))
-
-            # hmm, we could iterate over child, but whatever
-            self.tools_pages[pg] = ToolPage(tool, text, buff)
-
-    def _addNotebook(self):
-        tools = self.satt.getTools()
-        if not tools:
-            lbl = Gtk.Label("Sorry, got no tools to display")
-            self.vbox.pack_start(lbl, True, True, 0)
-            return
-
-        self.notebook = Gtk.Notebook()
-        self.vbox.pack_start(self.notebook, True, True, 0)
-
-        self._addNotebookPages(tools)
-        self.notebook.connect('switch-page', self.page_selected_cb)
-
-    def page_selected_cb(self, notebook, page, data):
-        self.cur_page = page
-        tp = self.tools_pages[page]
-        if tp.tool == 'help':
-            return
-
-        if tp.textbuffer.get_char_count() == 0:
-            ok, cfg, err = self.satt.getConfigFile(tp.tool)
-            if ok != 0:
-                tp.textbuffer.set_text('Failed getting config file: {0}'.format(err))
-                return
-            else:
-                tp.textbuffer.set_text(cfg)
-
-            if tp.showing_log:
-                self.logbutton.set_label('Show config')
-            else:
-                self.logbutton.set_label('Show logs')
-
-    def _store_cur_page_config(self):
-        tp = self.tools_pages[self.cur_page]
-        start = tp.textbuffer.get_start_iter()
-        end = tp.textbuffer.get_end_iter()
-        txt = tp.textbuffer.get_text(start, end, True)
-        tp.config = txt
-
-        return tp
-
-    def show_log(self, button, log, dialog):
-        dialog.destroy()
-        tp = self._store_cur_page_config()
-
-        ok, log, err = self.satt.getLogFile(log)
-        if ok != 0:
-            tp.textbuffer.set_text('Failed getting log file: {0}'.format(err))
-        else:
-            tp.textbuffer.set_text(log)
-
-        tp.showing_log = True
-        self.logbutton.set_label('Show config')
-
-    def show_logs_cb(self, widget):
-        tp = self.tools_pages[self.cur_page]
-        if tp.tool == 'help':
-            print('help is not a tool!')
-            return
-
-        # if we're showing the log, we want to
-        # show the config again
-        if tp.showing_log:
-            tp.showing_log = False
-            self.logbutton.set_label('Show logs')
-            tp.textbuffer.set_text(tp.config)
-            return
-
-        listbox = Gtk.ListBox()
-        dialog = Gtk.Dialog()
-
-        logs = self.satt.getLogsList(tp.tool)
-        if not logs:
-            listbox.add(Gtk.Label('No logs found for this tool'))
-            return
-
-        for l in logs:
-            b = Gtk.Button(label=l)
-            b.connect("clicked", self.show_log, l, dialog)
-            listbox.add(b)
-
-        box = dialog.get_content_area()
-        box.add(listbox)
-        dialog.show_all()
+        self.box.pack_start(win, True, True, 5)
+        self.box.pack_start(Gtk.HSeparator(), False, False, 3)
+        self.box.pack_start(self.buttons_box, False, False, 5)
 
     def _addBottomButtons(self):
-        self.logbutton = Gtk.Button(label="Show logs")
-        self.logbutton.connect("clicked", self.show_logs_cb)
-        self.buttons_box.pack_start(self.logbutton, False, False, 2)
-
-        sep = Gtk.VSeparator()
-        self.buttons_box.pack_start(sep, False, False, 10)
-
-        # add toggle buttons
-        self._addCheckOptions()
-
         def run_button_cb(widget):
             pass
 
+        def send_mail_btn_cb(btn):
+            if btn.get_active():
+                pass
+
+        send_email_btn = Gtk.CheckButton("Send e-mail")
+        send_email_btn.connect("toggled", send_mail_btn_cb)
+        send_email_btn.set_active(True)
+        self.buttons_box.pack_start(send_email_btn, False, False, 10)
+
         # add run button
-        self.run_button = Gtk.Button(label="Run!")
-        self.run_button.connect("clicked", run_button_cb)
-        self.buttons_box.pack_end(self.run_button, False, False, 0)
+        run_button = Gtk.Button(label="Run!")
+        run_button.connect("clicked", run_button_cb)
+        self.buttons_box.pack_end(run_button, False, False, 0)
 
         # add note entry
         lbl = Gtk.Label("note:")
@@ -289,17 +182,90 @@ class SattGui(Gtk.Window):
         self.buttons_box.pack_end(self.note, False, False, 5)
         self.buttons_box.pack_end(lbl, False, False, 5)
 
-    def _addCheckOptions(self):
-        def send_mail_btn_cb(btn):
-            if btn.get_active():
-                self.send_email = True
-            else:
-                self.send_email = True
+class LogsPage(object):
+    def __init__(self):
+        self.box = Gtk.HBox()
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_UP_DOWN)
+        stack.set_transition_duration(500)
 
-        send_email_btn = Gtk.CheckButton("Send e-mail")
-        send_email_btn.connect("toggled", send_mail_btn_cb)
-        send_email_btn.set_active(True)
-        self.buttons_box.pack_start(send_email_btn, False, False, 10)
+        stackbar = Gtk.StackSidebar()
+        stackbar.set_stack(stack)
+
+        logs = ['log1dsafsdfdsf', 'log2sadfsdaffds', 'log3asdsdf']
+        for l in logs:
+            stack.add_titled(self.create_log_row(l), l, l)
+
+        self.box.pack_start(stackbar, False, False, 10)
+        self.box.pack_start(Gtk.VSeparator(), False, False, 3)
+        self.box.pack_start(stack, True, True, 0)
+
+    def create_log_row(self, log):
+        win, text, textbuf = _createTextWin()
+        textbuf.set_text(log)
+
+        return win
+
+class SattGui(Gtk.Window):
+    def __init__(self):
+        Gtk.Window.__init__(self, title='Statica Tool Tester')
+        self.satt = SattProxy()
+
+        self.set_default_size(600, 400)
+        self._addNotebook()
+
+    def _createNotebookPage(self, tool):
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        stack.set_transition_duration(500)
+
+        stackswitcher = Gtk.StackSwitcher(1)
+        stackswitcher.set_stack(stack)
+
+        tp = ToolPage(tool)
+        tp.box = Gtk.VBox()
+        tp.box.pack_start(stackswitcher, False, False, 0)
+        tp.box.pack_start(stack, True, True, 0)
+
+        tp.run = RunPage()
+        tp.logs = LogsPage()
+
+        stack.add_titled(tp.run.box, 'run', 'Run')
+        stack.add_titled(tp.logs.box, 'logs', 'Logs')
+        stack.add_titled(Gtk.Label('Results: Not Implemented'),
+                         'results', 'Results')
+
+        return tp
+
+    def _addNotebookPages(self, tools):
+        for tool in tools:
+            # hmm, we could iterate over child, but whatever
+            tp = self._createNotebookPage(tool)
+            self.notebook.append_page(tp.box, Gtk.Label(tool))
+
+    def _addNotebook(self):
+        tools = self.satt.getTools()
+        if not tools:
+            lbl = Gtk.Label("Sorry, got no tools to display")
+            self.add(lbl)
+            return
+
+        self.notebook = Gtk.Notebook()
+        self.add(self.notebook)
+
+        self._addNotebookPages(tools)
+        self.notebook.connect('switch-page', self.page_selected_cb)
+
+    def page_selected_cb(self, notebook, page, data):
+        pass
+       #if tp.textbuffer.get_char_count() == 0:
+       #    ok, cfg, err = self.satt.getConfigFile(tp.tool)
+       #    if ok != 0:
+       #        tp.textbuffer.set_text('Failed getting config file: {0}'.format(err))
+       #        return
+       #    else:
+       #        tp.textbuffer.set_text(cfg)
+
 
 if __name__ == "__main__":
     gui = SattGui()
