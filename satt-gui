@@ -82,7 +82,6 @@ class SattProxy(object):
         return self._run(cmd)
 
     def getTools(self):
-        return ['tool1', 'tool2', 'tool3']
         global remote_dir
         cmd = self.ssh[:]
         cmd.append('find')
@@ -146,17 +145,31 @@ def _createTextWin():
     return (win, text, buff)
 
 class RunPage(object):
-    def __init__(self):
+    def __init__(self, tool, satt):
+        self.tool = tool
+        self.satt = satt
+
         win, self.textview, self.textbuf = _createTextWin()
         self.box = Gtk.VBox()
         self.buttons_box = Gtk.HBox()
 
-        self.textbuf.set_text('text window')
         self._addBottomButtons()
-
         self.box.pack_start(win, True, True, 5)
         self.box.pack_start(Gtk.HSeparator(), False, False, 3)
         self.box.pack_start(self.buttons_box, False, False, 5)
+
+        win.connect("map", self.load_config_file)
+
+    def load_config_file(self, widget):
+        if self.textbuf.get_char_count() != 0:
+            return
+
+        ok, cfg, err = self.satt.getConfigFile(self.tool)
+        if ok != 0:
+            self.textbuf.set_text('Failed getting config file: {0}'.format(err))
+            self.textview.set_editable(False)
+        else:
+            self.textbuf.set_text(cfg)
 
     def _addBottomButtons(self):
         def run_button_cb(widget):
@@ -183,22 +196,35 @@ class RunPage(object):
         self.buttons_box.pack_end(lbl, False, False, 5)
 
 class LogsPage(object):
-    def __init__(self):
+    def __init__(self, tool, satt):
+        self.tool = tool
+        self.satt = satt
+        self.logfiles = []
+
         self.box = Gtk.HBox()
-        stack = Gtk.Stack()
-        stack.set_transition_type(Gtk.StackTransitionType.SLIDE_UP_DOWN)
-        stack.set_transition_duration(500)
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_UP_DOWN)
+        self.stack.set_transition_duration(500)
 
         stackbar = Gtk.StackSidebar()
-        stackbar.set_stack(stack)
-
-        logs = ['log1dsafsdfdsf', 'log2sadfsdaffds', 'log3asdsdf']
-        for l in logs:
-            stack.add_titled(self.create_log_row(l), l, l)
+        stackbar.set_stack(self.stack)
+#        stackbar.connect('map', self.on_map)
 
         self.box.pack_start(stackbar, False, False, 10)
         self.box.pack_start(Gtk.VSeparator(), False, False, 3)
-        self.box.pack_start(stack, True, True, 0)
+        self.box.pack_start(self.stack, True, True, 0)
+
+#   def on_map(self, stackbar):
+#       if self.logfiles:
+#           return
+#
+#       self.logfiles = ['log1', 'log2']
+#       if not self.logfiles:
+#           self.stack.add_titled(Gtk.Label('No log file found'), 'no log', 'no log')
+#           return
+#
+#       for l in self.logfiles:
+#           self.stack.add_titled(self.create_log_row(l), l, l)
 
     def create_log_row(self, log):
         win, text, textbuf = _createTextWin()
@@ -211,7 +237,7 @@ class SattGui(Gtk.Window):
         Gtk.Window.__init__(self, title='Statica Tool Tester')
         self.satt = SattProxy()
 
-        self.set_default_size(600, 400)
+        self.set_default_size(800, 600)
         self._addNotebook()
 
     def _createNotebookPage(self, tool):
@@ -227,8 +253,8 @@ class SattGui(Gtk.Window):
         tp.box.pack_start(stackswitcher, False, False, 0)
         tp.box.pack_start(stack, True, True, 0)
 
-        tp.run = RunPage()
-        tp.logs = LogsPage()
+        tp.run = RunPage(tool, self.satt)
+        tp.logs = LogsPage(tool, self.satt)
 
         stack.add_titled(tp.run.box, 'run', 'Run')
         stack.add_titled(tp.logs.box, 'logs', 'Logs')
@@ -254,18 +280,10 @@ class SattGui(Gtk.Window):
         self.add(self.notebook)
 
         self._addNotebookPages(tools)
-        self.notebook.connect('switch-page', self.page_selected_cb)
-
-    def page_selected_cb(self, notebook, page, data):
-        pass
-       #if tp.textbuffer.get_char_count() == 0:
-       #    ok, cfg, err = self.satt.getConfigFile(tp.tool)
-       #    if ok != 0:
-       #        tp.textbuffer.set_text('Failed getting config file: {0}'.format(err))
-       #        return
-       #    else:
-       #        tp.textbuffer.set_text(cfg)
-
+#       self.notebook.connect('switch-page', self.page_selected_cb)
+#
+#   def page_selected_cb(self, notebook, page, data):
+#       pass
 
 if __name__ == "__main__":
     gui = SattGui()
