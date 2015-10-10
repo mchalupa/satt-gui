@@ -46,6 +46,7 @@ class ToolPage(object):
         self.tool = tool
         self.textview = tv
         self.textbuffer = tb
+        self.showing_log = False
 
 class SattProxy(object):
     def __init__(self):
@@ -67,6 +68,15 @@ class SattProxy(object):
 
         global remote_dir
         cmd.append('{0}/{1}/config'.format(remote_dir, tool))
+
+        return self._run(cmd)
+
+    def getLogFile(self, log):
+        cmd = self.ssh[:]
+        cmd.append('cat')
+
+        global remote_dir
+        cmd.append('{0}/{1}'.format(remote_dir, log))
 
         return self._run(cmd)
 
@@ -93,6 +103,27 @@ class SattProxy(object):
 
         return tools
 
+    def getLogsList(self, tool):
+        global remote_dir
+        cmd = self.ssh[:]
+        cmd.append('find')
+        cmd.append(remote_dir)
+        cmd.append('-name')
+        cmd.append('{0}.*'.format(tool))
+
+        ok, lst, err = self._run(cmd)
+        if ok != 0:
+            return []
+
+        logs = []
+        for line in iter(lst.splitlines()):
+            # the prefix is satt and suffix config, like:
+            # satt/symbiotic/config
+            t = line[5:]
+            logs.append(t)
+
+        return logs
+
     def run(self, *arguments):
         cmd = self.satt[:]
         for a in arguments:
@@ -105,6 +136,7 @@ class SattGui(Gtk.Window):
         Gtk.Window.__init__(self, title='Statica Tool Tester')
         self.satt = SattProxy()
         self.tools_pages = {}
+        self.cur_page = None
 
         self.set_default_size(600, 400)
         self.vbox = Gtk.VBox()
@@ -161,6 +193,7 @@ class SattGui(Gtk.Window):
         self.notebook.connect('switch-page', self.page_selected_cb)
 
     def page_selected_cb(self, notebook, page, data):
+        self.cur_page = page
         tp = self.tools_pages[page]
         if tp.tool == 'help':
             return
@@ -173,7 +206,73 @@ class SattGui(Gtk.Window):
             else:
                 tp.textbuffer.set_text(cfg)
 
+            if tp.showing_log:
+                self.logbutton.set_label('Show config')
+            else:
+                self.logbutton.set_label('Show logs')
+
+    def _store_cur_page_config(self):
+        tp = self.tools_pages[self.cur_page]
+        start = tp.textbuffer.get_start_iter()
+        end = tp.textbuffer.get_end_iter()
+        txt = tp.textbuffer.get_text(start, end, True)
+        tp.config = txt
+
+        return tp
+
+    def show_log(self, button, log, dialog):
+        dialog.destroy()
+        tp = self._store_cur_page_config()
+
+        ok, log, err = self.satt.getLogFile(log)
+        if ok != 0:
+            tp.textbuffer.set_text('Failed getting log file: {0}'.format(err))
+        else:
+            tp.textbuffer.set_text(log)
+
+        tp.showing_log = True
+        self.logbutton.set_label('Show config')
+
+    def show_logs_cb(self, widget):
+        tp = self.tools_pages[self.cur_page]
+        if tp.tool == 'help':
+            print('help is not a tool!')
+            return
+
+        # if we're showing the log, we want to
+        # show the config again
+        if tp.showing_log:
+            tp.showing_log = False
+            self.logbutton.set_label('Show logs')
+            tp.textbuffer.set_text(tp.config)
+            return
+
+        listbox = Gtk.ListBox()
+        dialog = Gtk.Dialog()
+
+        logs = self.satt.getLogsList(tp.tool)
+        if not logs:
+            listbox.add(Gtk.Label('No logs found for this tool'))
+            return
+
+        for l in logs:
+            b = Gtk.Button(label=l)
+            b.connect("clicked", self.show_log, l, dialog)
+            listbox.add(b)
+
+        box = dialog.get_content_area()
+        box.add(listbox)
+        dialog.show_all()
+
     def _addBottomButtons(self):
+        self.logbutton = Gtk.Button(label="Show logs")
+        self.logbutton.connect("clicked", self.show_logs_cb)
+        self.buttons_box.pack_start(self.logbutton, False, False, 2)
+
+        sep = Gtk.VSeparator()
+        self.buttons_box.pack_start(sep, False, False, 10)
+
+        # add toggle buttons
         self._addToggleOptions()
 
         def run_button_cb(widget):
