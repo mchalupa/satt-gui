@@ -1,0 +1,210 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2015 Marek Chalupa
+# statica@fi.muni.cz
+#
+# Permission to use, copy, modify, distribute, and sell this software and its
+# documentation for any purpose is hereby granted without fee, provided that
+# the above copyright notice appear in all copies and that both that copyright
+# notice and this permission notice appear in supporting documentation, and
+# that the name of the copyright holders not be used in advertising or
+# publicity pertaining to distribution of the software without specific,
+# written prior permission. The copyright holders make no representations
+# about the suitability of this software for any purpose. It is provided "as
+# is" without express or implied warranty.
+#
+# THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+# INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+# EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+# CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+# DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+# TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+# OF THIS SOFTWARE.
+#
+
+from gi.repository import Gtk, GtkSource
+from subprocess import Popen, PIPE
+
+import sys
+
+# FIXME do this configurable
+server = 'arran.fi.muni.cz'
+user = 'statica'
+remote_dir = 'satt'
+
+help_page_text = """
+Statica tools tester GUI
+
+Select a tool which to run, configure and run!
+"""
+
+class SattProxy(object):
+    def __init__(self):
+        global user
+        global server
+        global remote_dir
+        self.ssh = ['ssh', '{0}@{1}'.format(user, server)]
+        self.satt = self.ssh[:] + ['{0}/satt'.format(remote_dir)]
+
+    def _run(self, cmd):
+        p = Popen(cmd, stdout = PIPE, stderr = PIPE)
+        out, err = p.communicate()
+
+        return (p.returncode, out, err)
+
+    def getConfigFile(self, tool):
+        cmd = self.ssh[:]
+        cmd.append('cat')
+
+        global remote_dir
+        cmd.append('{0}/{1}/config'.format(remote_dir, tool))
+
+        return self._run(cmd)
+
+    def getTools(self):
+        global remote_dir
+        cmd = self.ssh[:]
+        cmd.append('find')
+        cmd.append(remote_dir)
+        cmd.append('-name')
+        cmd.append('config')
+
+        ok, lst, err = self._run(cmd)
+        if ok != 0:
+            return []
+
+        tools = []
+        for line in iter(lst.splitlines()):
+            # the prefix is satt and suffix config, like:
+            # satt/symbiotic/config
+            t = line[5:-7]
+
+            if t != '.git' and t != 'database':
+                tools.append(t)
+
+        return tools
+
+    def run(self, *arguments):
+        cmd = self.satt[:]
+        for a in arguments:
+            cmd.append(a)
+
+        return self._run(cmd)
+
+class SattGui(Gtk.Window):
+    def __init__(self):
+        Gtk.Window.__init__(self, title='Statica Tool Tester')
+        self.satt = SattProxy()
+        self.tools_pages = {}
+
+        self.set_default_size(600, 400)
+        self.vbox = Gtk.VBox()
+        self.buttons_box = Gtk.HBox()
+        self.add(self.vbox)
+
+        self.vbox.pack_end(self.buttons_box, False, False, 0)
+
+        self._addBottomButtons()
+        self._addNotebook()
+
+    def _addHelpPage(self):
+        # TODO when user selects a tool,
+        # destroy this page
+        pg = Gtk.Box()
+        text = Gtk.TextView()
+        text.set_editable(False)
+        buff = text.get_buffer()
+
+        global help_page_text
+        buff.set_text(help_page_text)
+        pg.add(text)
+        self.notebook.append_page(pg, Gtk.Label('Help'))
+        self.tools_pages[pg] = (text, 'help')
+
+    def _addNotebookPages(self, tools):
+        self._addHelpPage()
+        langm = GtkSource.LanguageManager()
+        lang = langm.get_language('python')
+
+        for tool in tools:
+            pg = Gtk.ScrolledWindow()
+            buff = GtkSource.Buffer()
+            buff.set_language(lang)
+            text = GtkSource.View.new_with_buffer(buff)
+
+            pg.add(text)
+            self.notebook.append_page(pg, Gtk.Label(tool))
+
+            # hmm, we could iterate over child, but whatever
+            self.tools_pages[pg] = (text, tool)
+
+    def _addNotebook(self):
+        tools = self.satt.getTools()
+        if not tools:
+            lbl = Gtk.Label("Sorry, got no tools to display")
+            self.vbox.pack_start(lbl, True, True, 0)
+            return
+
+        self.notebook = Gtk.Notebook()
+        self.vbox.pack_start(self.notebook, True, True, 0)
+
+        self._addNotebookPages(tools)
+        self.notebook.connect('switch-page', self.page_selected_cb)
+
+    def page_selected_cb(self, notebook, page, data):
+        text, tool = self.tools_pages[page]
+        if tool == 'help':
+            return
+
+        buff = text.get_buffer()
+        if buff.get_char_count() == 0:
+            ok, cfg, err = self.satt.getConfigFile(tool)
+            if ok != 0:
+                buff.set_text('Failed getting config file: {0}'.format(err))
+                return
+            else:
+                buff.set_text(cfg)
+
+    def _addBottomButtons(self):
+        self._addToggleOptions()
+
+        def run_button_cb(widget):
+            pass
+
+        # add run button
+        self.run_button = Gtk.Button(label="Run!")
+        self.run_button.connect("clicked", run_button_cb)
+        self.buttons_box.pack_end(self.run_button, False, False, 0)
+
+        # add note entry
+        lbl = Gtk.Label("note:")
+        self.note = Gtk.Entry()
+        self.buttons_box.pack_end(self.note, False, False, 5)
+        self.buttons_box.pack_end(lbl, False, False, 5)
+
+    def _addToggleOptions(self):
+        def send_mail_btn_cb(btn):
+            if btn.get_active():
+                self.send_email = True
+            else:
+                self.send_email = True
+
+        send_email_btn = Gtk.ToggleButton("Send e-mail")
+        send_email_btn.connect("toggled", send_mail_btn_cb)
+        send_email_btn.set_active(True)
+        self.buttons_box.pack_start(send_email_btn, False, False, 0)
+
+        send_email_btn = Gtk.ToggleButton("Send e-mail")
+        send_email_btn.connect("toggled", send_mail_btn_cb)
+        self.buttons_box.pack_start(send_email_btn, False, False, 0)
+
+        send_email_btn = Gtk.ToggleButton("Send e-mail")
+        send_email_btn.connect("toggled", send_mail_btn_cb)
+        self.buttons_box.pack_start(send_email_btn, False, False, 0)
+
+
+if __name__ == "__main__":
+    gui = SattGui()
+    gui.connect("delete-event", Gtk.main_quit)
+    gui.show_all()
+    Gtk.main()
